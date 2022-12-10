@@ -42,10 +42,11 @@ def infer(text):
             }
     
     global model
+    global device
     text = clean(text)
     
     infer_stime = time.time()
-    tokens = model.tokenizer(text, return_tensors='pt').to('cuda:0')
+    tokens = model.tokenizer(text, return_tensors='pt').to(device)
     logits = model(**tokens).logits
     infer_etime = time.time()
     preds = torch.softmax(logits, dim=-1).detach().cpu().numpy()
@@ -57,21 +58,17 @@ def infer(text):
     
 
 if __name__ == '__main__':
-    args = {
-        'ckpt_path': '/home/ubuntu/JupyterProjects/limkaram/frown-sentence-classifier/lightning_logs/version_20/checkpoints/epoch4-val_loss0.3918-val_micro_f10.8594-val_macro_f10.8337-val_acc0.8594.ckpt',
-        # 'device': torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
-        # 'device': torch.device('cpu')
-    }
-    # device = args['device']
-    # print(f'set device: {device}')
-    # model = FrownSentenceClassifier.load_from_checkpoint(args['ckpt_path']).to(device)
-    model = FrownSentenceClassifier.load_from_checkpoint(args['ckpt_path']).to('cuda:0')
-    model.freeze()
+    ckpt_path = '/Users/limkaram/PersonalSpace/frown-sentence-classifier/epoch4-val_loss0.3918-val_micro_f10.8594-val_macro_f10.8337-val_acc0.8594.ckpt'
+    device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
+    print(f'set device: {device}')
+    model = FrownSentenceClassifier.load_from_checkpoint(ckpt_path).to(device)
     model.eval()
-    print(model.hparams)
-    print(model.tokenizer)
+    model.freeze()
     
-    infer_times = []
-    result_df = infer(text)
+    texts = ['까람이 개같이생겼네..']
+    for text in texts:
+        result_df = infer(text)
+        print(result_df)
+        print()
 
     
