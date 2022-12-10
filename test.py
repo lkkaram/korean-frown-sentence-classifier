@@ -34,7 +34,7 @@ if __name__ == '__main__':
         'lr': 5e-6,  # Starting Learning Rate
         'epochs': 20,  # Max Epochs
         'max_length': 60,  # Max Length input size
-        'test_data_path': "data/preprocess/fsc-test-v2.csv",  # Test Dataset file
+        'test_data_path': "data/preprocess/kfsc-test.csv",  # Test Dataset file
         'test_mode': True,  # Test Mode enables `fast_dev_run`
         'optimizer': 'AdamW',  # AdamW vs AdamP
         'lr_scheduler': 'exp',  # ExponentialLR vs CosineAnnealingWarmRestarts

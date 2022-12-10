@@ -42,9 +42,9 @@ if __name__ == '__main__':
         'lr': 5e-6,  # Starting Learning Rate
         'epochs': 6,  # Max Epochs
         'max_length': 60,  # Max Length input size
-        'train_data_path': "data/preprocess/fsc-train-v2.csv",  # Train Dataset file 
-        'val_data_path': "data/preprocess/fsc-val-v2.csv",  # Validation Dataset file 
-        'test_data_path': "data/preprocess/fsc-test-v2.csv",  # Test Dataset file
+        'train_data_path': "data/preprocess/kfsc-train.csv",  # Train Dataset file 
+        'val_data_path': "data/preprocess/kfsc-val.csv",  # Validation Dataset file 
+        'test_data_path': "data/preprocess/kfsc-test.csv",  # Test Dataset file
         'test_mode': False,  # Test Mode enables `fast_dev_run`
         'optimizer': 'AdamW',  # AdamW vs AdamP
         'lr_scheduler': 'exp',  # ExponentialLR vs CosineAnnealingWarmRestarts
