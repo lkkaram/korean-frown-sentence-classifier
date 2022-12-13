@@ -170,3 +170,6 @@ class FrownSentenceClassifier(LightningModule):
     
     def test_dataloader(self):
         return self.dataloader(self.hparams.test_data_path, shuffle=False)
+
+
+print('hello world')
