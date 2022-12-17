@@ -1,58 +1,83 @@
-import torch
-from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning import Trainer, seed_everything
+import os
+import constants
+from datasets import load_dataset
+from transformers import AutoModelForSequenceClassification, AutoTokenizer, DataCollatorWithPadding
+from transformers import TrainingArguments, Trainer, logging
+from utils import clean, make_current_datetime_dir, compute_metrics, preprocess_data
 
-from model import FrownSentenceClassifier
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = 'true'
+logging.set_verbosity_error()
 
 
-def train(args):
-    checkpoint_callback = ModelCheckpoint(
-        filename='epoch{epoch}-val_loss{val_loss:.4f}-val_micro_f1{val_micro_f1:.4f}-val_macro_f1{val_macro_f1:.4f}-val_acc{val_acc:.4f}',
-        monitor='val_loss',
-        save_top_k=10,
-        mode='min',
-        auto_insert_metric_name=False,
-    )
+def train(opt):
+    tokenizer = AutoTokenizer.from_pretrained(opt['pretrained_tokenizer'])
+    id2label = constants.ID2LABEL_EN
+    label2id = {v: k for k, v in id2label.items()}
+    labels = list(label2id.keys())
+    dataset = load_dataset('csv', data_files={'train': opt['train_dataset_path'],
+                                              'val': opt['val_dataset_path']
+                                              }
+                           )
+    dataset = dataset.map(preprocess_data,
+                                  batched=True,
+                                  remove_columns=dataset['train'].column_names,
+                                  fn_kwargs={'tokenizer': tokenizer,
+                                             'labels': labels
+                                             }
+                                  )
+    dataset.set_format('torch')
+    model = AutoModelForSequenceClassification.from_pretrained(opt['pretrained_model'], 
+                                                            problem_type=opt['problem_type'],
+                                                            num_labels=len(labels),
+                                                            id2label=id2label,
+                                                            label2id=label2id)
+    args = TrainingArguments(output_dir=make_current_datetime_dir(opt['output_dir']),
+                            evaluation_strategy=opt['evaluation_strategy'],
+                            save_strategy=opt['save_strategy'],
+                            learning_rate=opt['learning_rate'],
+                            per_device_train_batch_size=opt['per_device_train_batch_size'],
+                            per_device_eval_batch_size=opt['per_device_eval_batch_size'],
+                            num_train_epochs=opt['num_train_epochs'],
+                            weight_decay=opt['weight_decay'],
+                            load_best_model_at_end=opt['load_best_model_at_end'],
+                            metric_for_best_model=opt['metric_for_best_model'],
+                            seed=opt['seed'],
+                            dataloader_num_workers=opt['dataloader_num_workers'],
+                            no_cuda=opt['no_cuda']
+                            )
+    trainer = Trainer(args=args,
+                      model=model,
+                      tokenizer=tokenizer,
+                      train_dataset=dataset['train'],
+                      eval_dataset=dataset['val'],
+                      compute_metrics=compute_metrics,
+                      data_collator=DataCollatorWithPadding(tokenizer=tokenizer)
+                      )
     
-    print("Using PyTorch Ver", torch.__version__)
-    print("Fix Seed:", args['random_seed'])
-    seed_everything(args['random_seed'])
-    model = FrownSentenceClassifier(**args)
-
-    print(":: Start Training ::")
-    trainer = Trainer(
-        callbacks=[checkpoint_callback],
-        max_epochs=args['epochs'],
-        fast_dev_run=args['test_mode'],
-        num_sanity_val_steps=None if args['test_mode'] else 0,
-        deterministic=torch.cuda.is_available(),
-        accelerator='gpu',
-        devices=[args['gpu']] if torch.cuda.is_available() else None,  # 0번 idx GPU  사용
-        precision=16 if args['fp16'] and torch.cuda.is_available() else 32,
-    )
-    trainer.fit(model)
+    trainer.train()
     
 
 if __name__ == '__main__':
-    args = {
-        'random_seed': 1031, # Random Seed
-        'pretrained_model': 'beomi/KcELECTRA-base-v2022',  # Transformers PLM name
-        'pretrained_tokenizer': 'beomi/KcELECTRA-base-v2022',  # Optional, Transformers Tokenizer Name. Overrides `pretrained_model`
-        'batch_size': 128,
-        'lr': 5e-6,  # Starting Learning Rate
-        'epochs': 6,  # Max Epochs
-        'max_length': 60,  # Max Length input size
-        'train_data_path': "data/preprocess/kfsc-train.csv",  # Train Dataset file 
-        'val_data_path': "data/preprocess/kfsc-val.csv",  # Validation Dataset file 
-        'test_data_path': "data/preprocess/kfsc-test.csv",  # Test Dataset file
-        'test_mode': False,  # Test Mode enables `fast_dev_run`
-        'optimizer': 'AdamW',  # AdamW vs AdamP
-        'lr_scheduler': 'exp',  # ExponentialLR vs CosineAnnealingWarmRestarts
-        'fp16': True,  # Enable train on FP16(if GPU)
-        'tpu_cores': 0,  # Enable TPU with 1 core or 8 cores
-        'cpu_workers': 4,
-        'gpu': 0,
-        'num_labels': 8
-    }
+    opt = {'pretrained_model': 'beomi/KcELECTRA-base-v2022',
+           'pretrained_tokenizer': 'beomi/KcELECTRA-base-v2022',
+           'problem_type': 'multi_label_classification',
+           'train_dataset_path': 'data/preprocess/kfsc-multi-label-classification-train.csv',
+           'val_dataset_path': 'data/preprocess/kfsc-multi-label-classification-val.csv',
+           'output_dir': 'weights/',
+           'metric_for_best_model': 'f1',
+           'evaluation_strategy': 'epoch',
+           'save_strategy': 'epoch',
+           'seed': 1031,
+           'no_cuda': False,
+           'learning_rate': 5e-6,
+           'per_device_train_batch_size': 16,
+           'per_device_eval_batch_size': 16,
+           'num_train_epochs': 10,
+           'weight_decay': 0.01,
+           'dataloader_num_workers': 4,
+           'load_best_model_at_end': False,
+           }
     
-    train(args)
+    train(opt)

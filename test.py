@@ -1,50 +1,74 @@
 import os
-import pandas as pd
-from glob import glob
-
-from pprint import pprint
 import torch
-from pytorch_lightning import Trainer
-from model import FrownSentenceClassifier
+import numpy as np
+from datasets import load_dataset
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+from sklearn.metrics import f1_score, roc_auc_score, accuracy_score
+from transformers import DataCollatorWithPadding, logging
+
+from tqdm import tqdm
+from utils import multi_label_metrics, preprocess_data
+import constants
 
 
-def evaluate(args):
-    trainer = Trainer(fast_dev_run=args['test_mode'],
-                      num_sanity_val_steps=None if args['test_mode'] else 0,
-                      deterministic=torch.cuda.is_available(),
-                      accelerator='gpu',
-                      devices=[args['gpu']] if torch.cuda.is_available() else None,  # 0번 idx GPU  사용
-                      precision=16 if args['fp16'] and torch.cuda.is_available() else 32
-                      )
+os.environ["TOKENIZERS_PARALLELISM"] = 'false'
+os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = 'true'
+logging.set_verbosity_error()
 
-    model = FrownSentenceClassifier(**args)
-    model.freeze()
+
+
+def evaluate(opt):    
+    tokenizer = AutoTokenizer.from_pretrained(opt['ckpt_path'])
+    dataset = load_dataset('csv', data_files={'test': opt['test_dataset_path']})
+    dataset = dataset.map(preprocess_data,
+                                  batched=True,
+                                  remove_columns=dataset['test'].column_names,
+                                  fn_kwargs={'tokenizer': tokenizer,
+                                             'labels': list(constants.ID2LABEL_EN.values())
+                                             }
+                                  )
+    dataset.set_format('torch')
+    dataloader = torch.utils.data.DataLoader(dataset['test'],
+                                             batch_size=opt['batch_size'],
+                                             shuffle=False,
+                                             num_workers=opt['num_workers'],
+                                             collate_fn=DataCollatorWithPadding(tokenizer=tokenizer)
+                                             )
+    
+    scores = {'micro_f1': [],
+            'roc_auc': [],
+            'accuracy': []
+            }
+    device = torch.device(opt['device'])
+    model = AutoModelForSequenceClassification.from_pretrained(opt['ckpt_path']).to(device)
+    
     model.eval()
-    trainer.test(model=model,
-                ckpt_path=args['test_ckpt_path']
-                )
+    for data in tqdm(dataloader, total=len(dataloader), ncols=100):
+        inputs = {'input_ids': data['input_ids'].to(device),
+                    'token_type_ids': data['token_type_ids'].to(device),
+                    'attention_mask': data['attention_mask'].to(device)}
+        labels = data['labels']
+        outputs = model(**inputs)
+        logits = outputs.logits.detach().cpu()
+        
+        score = multi_label_metrics(logits, labels)
+        scores['micro_f1'].append(score['f1'])
+        scores['roc_auc'].append(score['roc_auc'])
+        scores['accuracy'].append(score['accuracy'])
+
+    micro_f1 = np.mean(scores['micro_f1'])
+    roc_auc = np.mean(scores['roc_auc'])
+    accuracy = np.mean(scores['accuracy'])
+    print(f'micro_f1: {micro_f1:.4f}, roc_acu: {roc_auc:.4f}, accuracy: {accuracy:.4f}')
+    
 
 
 if __name__ == '__main__':
-    args = {
-        'random_seed': 1031, # Random Seed
-        'pretrained_model': 'beomi/KcELECTRA-base-v2022',  # Transformers PLM name
-        'pretrained_tokenizer': 'beomi/KcELECTRA-base-v2022',  # Optional, Transformers Tokenizer Name. Overrides `pretrained_model`
-        'batch_size': 128,
-        'lr': 5e-6,  # Starting Learning Rate
-        'epochs': 20,  # Max Epochs
-        'max_length': 60,  # Max Length input size
-        'test_data_path': "data/preprocess/kfsc-test.csv",  # Test Dataset file
-        'test_mode': True,  # Test Mode enables `fast_dev_run`
-        'optimizer': 'AdamW',  # AdamW vs AdamP
-        'lr_scheduler': 'exp',  # ExponentialLR vs CosineAnnealingWarmRestarts
-        'fp16': True,  # Enable train on FP16(if GPU)
-        'tpu_cores': 0,  # Enable TPU with 1 core or 8 cores
-        'cpu_workers': 4,
-        'gpu': 0,
-        'test_ckpt_path': '/home/ubuntu/JupyterProjects/limkaram/frown-sentence-classifier/lightning_logs/version_20/checkpoints/epoch4-val_loss0.3918-val_micro_f10.8594-val_macro_f10.8337-val_acc0.8594.ckpt',
-        'num_labels': 8
-    }
-
-    evaluate(args)
+    opt = {'ckpt_path': 'weights/20221214T20-40-08/checkpoint-4170',
+           'test_dataset_path': 'data/preprocess/kfsc-multi-label-classification-test.csv',
+           'device': 'cuda:0',
+           'batch_size': 64,
+           'num_workers': 4,
+           }
     
+    evaluate(opt)
